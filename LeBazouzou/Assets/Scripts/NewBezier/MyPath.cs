@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using Unity.VisualScripting;
+using UnityEditor;
 using UnityEngine;
 using UnityEngine.Events;
 using Object = UnityEngine.Object;
@@ -7,56 +9,83 @@ using Object = UnityEngine.Object;
 namespace NewBezier
 {
 
+    [Serializable]
     public class MyPath
     {
         [Serializable]
         public class Point
         {
-            private Transform _transform;
-
-            public Transform parent
+            [SerializeField]private Transform _transform;
+            private Transform Transform
             {
-                get => _transform.parent;
-                set => _transform.parent = value;
+                get
+                {
+                    if (!_transform) _transform = CreateTransform();
+                    return _transform;
+                }
+                set
+                {
+                    _transform = value;
+                    _transform.parent = value.parent;
+                }
             }
-            
-            public Vector3 Position => _transform.position;
-            private Vector3 previousTangent;
 
+            [HideInInspector]public Transform parent;
+            
+            public string Name
+            {
+                get => Transform.name;
+                set => Transform.name = value;
+            }
+
+            private Vector3 _position;
+            public Vector3 Position
+            {
+                get => _position;
+                set{
+                    _position = value;
+                    Transform.position = value;
+                }
+            }
+
+            private Vector3 _previousTangent;
             public Vector3 PreviousTangent
             {
-                get => previousTangent + Position;
-                set => SetTangeantValue(value, true);
+                get => _previousTangent + Position;
+                set=>SetTangeantValue(value, true);
+                
             }
 
-            private Vector3 nextTangent;
+
+            private Vector3 _nextTangent;
             public Vector3 NextTangent
             {
-                get => nextTangent + Position;
+                get => _nextTangent + Position;
                 set => SetTangeantValue(value, false);
             }
             public UnityEvent unityEvent;
             
-            public Point(Vector3 position)
+            public Point(Transform parent, Vector3 position)
             {
-                _transform = Object.Instantiate(new GameObject(), position, Quaternion.identity).transform;
+                this.parent = parent;
+                Position = position;
             }
 
-            public Point(Vector3 position, Vector3 previousTangent) : this(position)
+            public Point(Transform parent,Vector3 position, Vector3 previousTangent) : this(parent,position)
             {
-                this.previousTangent = previousTangent;
+                if(previousTangent != Vector3.zero)PreviousTangent = previousTangent;
             }
 
-            public Point(Vector3 position, Vector3 previousTangent, Vector3 nextTangent) : this(position,
+            public Point(Transform parent,Vector3 position, Vector3 previousTangent, Vector3 nextTangent) : this(parent, position,
                 previousTangent)
             {
-                this.nextTangent = nextTangent;
+                if(nextTangent != Vector3.zero)NextTangent = nextTangent;
             }
 
             private void SetTangeantValue(Vector3 value, bool isPrevious)
             {
-                if (isPrevious) previousTangent = value - Position;
-                else nextTangent = value - Position;
+                if (isPrevious) _previousTangent = value - Position;
+                else _nextTangent = value - Position;
             }
             
             public static explicit operator Vector3(Point p) => p.Position;
@@ -66,26 +95,34 @@ namespace NewBezier
                 Destroy();
             }
 
+            Transform CreateTransform()
+            { 
+                var transform = Object.Instantiate(new GameObject(), Position, Quaternion.identity).transform;
+                transform.parent = parent;
+                return transform;
+            }
+            
             public void Destroy()
             {
-                Object.Destroy(_transform.gameObject);
+                GameObject.Destroy(Transform.gameObject);
             }
         }
 
-        private List<Point> _points;
+        public List<Point> _points;
 
-        private Transform _positionParent;
+        private Transform _parent;
 
-        public MyPath(Vector3 center, Transform posParent)
+        public MyPath(Vector3 center, Transform parent)
         {
-            Point point1 = new(center + Vector3.left, Vector3.zero, center + (Vector3.left + Vector3.up));
-            Point point2 = new(Vector3.right, center + (Vector3.right + Vector3.down));
-            point1.parent = point2.parent = _positionParent = posParent;
+            _parent = parent;
+            Point point1 = new(parent, center + Vector3.left, Vector3.zero, center + (Vector3.left + Vector3.up));
+            Point point2 = new(parent, center + Vector3.right, center + (Vector3.right + Vector3.down));
             _points = new List<Point>()
             {
                 point1,
                 point2
             };
+            UdpateNames();
         }
 
         public Point this[int i] => _points[i];
@@ -94,20 +131,24 @@ namespace NewBezier
         public int SegmentAmount => _points.Count - 1;
 
 
+        public Point NewPoint(Vector3 pos, Vector3 previousPos, Vector3 nextPos) => new(_parent, pos, previousPos,nextPos);
+        
         public void AddSegment(Vector3 newAnchorPoint)
         {
             _points[^1].NextTangent = _points[^1].Position * 2 - _points[^1].PreviousTangent;
-            _points.Add(new(newAnchorPoint, _points[^1].NextTangent + newAnchorPoint));
-            _points[^1].parent = _positionParent;
+            _points.Add(new(_parent, newAnchorPoint, _points[^1].NextTangent + newAnchorPoint));
+            _points[^1].parent = _parent;
+            UdpateNames();
         }
 
         public void SplitSegment(Vector3 pos, int index)
         {
             var previousPos = ((_points[index].Position + _points[index].NextTangent) / 2 + pos) / 2;
             var nextPos = ((_points[index + 1].Position + _points[index + 1].NextTangent) / 2 + pos) / 2;
-            var point = new Point(pos, previousPos, nextPos);
-            point.parent = _positionParent;
+            var point = new Point(_parent,pos, previousPos, nextPos);
+            point.parent = _parent;
             _points.Insert(index, point);
+            UdpateNames();
         }
 
         public void SetSegmentStraight(int index)
@@ -126,6 +167,7 @@ namespace NewBezier
                 _points.RemoveAt(i);
                 point.Destroy();
             }
+            UdpateNames();
         }
 
         public Vector3[] GetSegmentPoints(int i) => new[]
@@ -140,6 +182,18 @@ namespace NewBezier
         {
             if (isPrevious || moveMirrored) _points[i].PreviousTangent = pos;
             if(!isPrevious || moveMirrored) _points[i].NextTangent = pos;
+        }
+
+        public void UdpateNames()
+        {
+            for (int i = 0; i < _points.Count; i++)
+            {
+                _points[i].Name = $"Point {i}";
+            }
+        }
+        public bool isNull()
+        {
+            return _points == null;
         }
     }
 }

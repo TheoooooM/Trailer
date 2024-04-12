@@ -82,7 +82,6 @@ namespace Bezier.Editor
 
             float minSegmentDepth = 100;
             int newSelectedSegmentIndex = -1;
-
             for (int i = 0; i < path.SegmentAmount; i++)
             {
                 Vector3[] segmentPoints = path.GetSegmentPoints(i);
